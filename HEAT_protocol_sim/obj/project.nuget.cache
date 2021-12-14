@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "dgSpecHash": "5rXazuQgQ269apc/6zbntCGtpMctTMjqSe6BJiKvGs0Rnr5KjanZLThtnsKoiIoKjzVFlSiSq2/cmxsL8LJ1wA==",
+  "success": true,
+  "projectFilePath": "/Users/ruiniu/RiderProjects/HEAT_protocol_sim/HEAT_protocol_sim/HEAT_protocol_sim.fsproj",
+  "expectedPackageFiles": [
+    "/Users/ruiniu/.nuget/packages/fsharp.core/6.0.1/fsharp.core.6.0.1.nupkg.sha512",
+    "/Users/ruiniu/.nuget/packages/microsoft.netcore.app.host.osx-x64/5.0.12/microsoft.netcore.app.host.osx-x64.5.0.12.nupkg.sha512"
+  ],
+  "logs": []
+}
