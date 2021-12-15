@@ -12,11 +12,14 @@ let system = ActorSystem.Create("FSharp")
 let k = 0.25
 let maxNumReq = 3
 
-let numNode = 100
-let deliverTarget = 100
-let numPack = 100
-let numAddtionalGW = 3
+let numNode = 20 // the number of nodes in the network
+
+let numPack = 20 // the number of packets fed into the network
+let numAddtionalGW = 3 // number of random gateway
 let gwRate = 3
+let fixedGWNeighbors = 3 //numNode / 10 + 1
+let meshNCount = 10
+let meshNeighborRate = 50 // 1/{} is the number of neighbors each node connects to initially
 let gws = HashSet<int>()
 
 let nodeAddrDict = new Dictionary<int, IActorRef>()
@@ -34,6 +37,8 @@ type Message =
     | PacketReq
     | Halt
     | TempReport of int * List<float>
+    | LostPacket of int
+    | Report 
 
 
 let rand = Random()
@@ -95,7 +100,10 @@ let meshNode id (initNeighbors:List<int>) (serverRef:IActorRef) (mailbox: Actor<
                 //mailbox.Self <! PrepareBroadcast
                 return! loop id t (state+1)
             | Packet(source, packId, hops) ->
-                printfn "pkt id %u arrives %u with current hop: %u" packId id hops
+                //printfn "pkt id %u arrives %u with current hop: %u" packId id hops
+                if hops >= 500 then
+                    serverRef <! LostPacket(packId)
+                    return! loop id myTemp (state + 1)
                 if source = id then serverRef <! PacketReq
                 if gwLink.Count > 0 then
                     mailbox.Context.ActorSelection(nodeAddr.[gwLink.[0]]) <! Packet(source, packId, hops + 1)
@@ -115,6 +123,7 @@ let meshNode id (initNeighbors:List<int>) (serverRef:IActorRef) (mailbox: Actor<
             | Halt ->
                 //printfn "hh"
                 //printfn "mesh node %u ended" id
+                //printfn "node %u has temperature %A" id temperatures
                 printfn ""
         }
     loop id 0.0 0
@@ -160,6 +169,7 @@ let gateway (id:int) (initNeighbors:List<int>) (serverRef:IActorRef) (mailbox: A
 let server (mailbox: Actor<_>) =
     let mutable totalPacketReq = 0
     let mutable totalPacketDelivered = 0
+    let mutable totalPacketLost = 0
     let mutable totalHops = 0
     let rec loop =
         actor {
@@ -172,26 +182,43 @@ let server (mailbox: Actor<_>) =
                 totalPacketDelivered <- totalPacketDelivered + 1
                 printfn $"packet delivered {totalPacketDelivered}/{numPack} ``````current delivery rate is {float(totalPacketDelivered) / float(numPack) * 100.0} %%"
                 totalHops <- totalHops + hopCount
-                if totalPacketDelivered >= deliverTarget then
-                    //todo report result and end simulation
-                    printfn("simulation finished")
-                    // todo report average hop count
-                    let avghop = float(totalHops) / float(numPack)
-                    printfn $"total number of packets delivered: {deliverTarget}"
-                    printfn $"total number of nodes {numNode}"
-                    printfn $"average hop count is {avghop}"
-                    //stop all the threads
-                    for id in nodeAddrDict.Keys do
-                        nodeAddrDict.[id] <! Halt
+                if totalPacketDelivered + totalPacketLost >= numPack then
+                    mailbox.Self <! Report
+//                    //todo report result and end simulation
+//                    printfn("simulation finished")
+//                    // todo report average hop count
+//                    let avghop = float(totalHops) / float(numPack)
+//                    printfn $"total number of packets delivered: {deliverTarget}"
+//                    printfn $"total number of nodes {numNode}"
+//                    printfn $"average hop count is {avghop}"
+//                    //stop all the threads
+//                    for id in nodeAddrDict.Keys do
+//                        nodeAddrDict.[id] <! Halt
                 return! loop
             | PacketReq ->
                 totalPacketReq <- totalPacketReq + 1
+                return! loop
+            | LostPacket(pid) ->
+                totalPacketLost <- totalPacketLost + 1
+                if totalPacketDelivered + totalPacketLost >= numPack then
+                    mailbox.Self <! Report
                 return! loop
             | TempReport(id, temps) ->
                 // todo let actor report temperature just uncomment
                 //let revList = temps.Reverse()
                 //printfn "%u has temperatures: %A" id temps;
                 return! loop
+            | Report ->
+                printfn("simulation finished")
+                // todo report average hop count
+                let avghop = float(totalHops) / float(totalPacketDelivered)
+                printfn $"total number of packets delivered: {totalPacketDelivered}"
+                printfn $"total number of packet loss : {totalPacketLost}"
+                printfn $"total number of nodes {numNode}"
+                printfn $"average hop count is {avghop}"
+                //stop all the threads
+                for id in nodeAddrDict.Keys do
+                    nodeAddrDict.[id] <! Halt
         }
     loop
     
@@ -201,9 +228,9 @@ let server (mailbox: Actor<_>) =
 
 let serverActor = spawn system "Server" <| server
 
-let gatewayNeighbors1 = getNeighbors 0 (rand.Next(numNode))
+let gatewayNeighbors1 = getNeighbors 0 fixedGWNeighbors//(rand.Next(numNode))
 
-let gatewayNeighbors2 = getNeighbors (numNode - 1) (rand.Next(numNode))
+let gatewayNeighbors2 = getNeighbors (numNode - 1) fixedGWNeighbors // (rand.Next(numNode))
 let gatewayActor1 = spawn system "gw0" <| gateway 0 gatewayNeighbors1 serverActor
 nodeAddr.Add(0, string(gatewayActor1.Path))
 gws.Add(0)
@@ -223,7 +250,7 @@ let mutable kk = 1
 while gwCount < numAddtionalGW do
     let gwIndex = rand.Next(1, numNode - 1)
     if not(gws.Contains(gwIndex)) then
-        let gwnbs = getNeighbors gwIndex (numNode / 100 + 1) 
+        let gwnbs = getNeighbors gwIndex (numNode / meshNeighborRate + 1) 
         let gwRef = spawn system ("gw" + string(gwIndex)) <| gateway gwIndex gwnbs serverActor
         gws.Add(gwIndex)
         gwCount <- gwCount + 1
@@ -235,7 +262,7 @@ while gwCount < numAddtionalGW do
 
 for i in [1..numNode - 2] do
     if not(gws.Contains(i)) then
-        let meshNeighbors = getNeighbors i (numNode / 100 + 1)//(rand.Next(numNode))
+        let meshNeighbors = getNeighbors i (numNode / meshNeighborRate + 1)//(rand.Next(numNode))
         let meshActor = spawn system ("mesh-" + string(i)) <| meshNode i meshNeighbors serverActor
         nodeAddrDict.Add(i, meshActor)
         nodeAddr.Add(i, string(meshActor.Path))
