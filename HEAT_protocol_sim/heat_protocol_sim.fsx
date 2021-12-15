@@ -12,9 +12,9 @@ let system = ActorSystem.Create("FSharp")
 let k = 0.25
 let maxNumReq = 3
 
-let numNode = 20
-let deliverTarget = 4
-let numPack = 4
+let numNode = 100
+let deliverTarget = 100
+let numPack = 100
 let numAddtionalGW = 3
 let gwRate = 3
 let gws = HashSet<int>()
@@ -40,10 +40,12 @@ let rand = Random()
 
 let getNeighbors (id:int) numNeighbor =
     let neighbors = List<int>()
-    for i in [0..numNeighbor - 1] do
+    let mutable i = 0
+    while i < numNeighbor do
        let pick = rand.Next(numNode)
-       if pick <> id then
+       if pick <> id && not(neighbors.Contains(pick)) then
            neighbors.Add(pick)
+           i <- i + 1
     neighbors
     
 let meshNode id (initNeighbors:List<int>) (serverRef:IActorRef) (mailbox: Actor<_>) =
@@ -53,7 +55,7 @@ let meshNode id (initNeighbors:List<int>) (serverRef:IActorRef) (mailbox: Actor<
     let rec loop id (myTemp:float) state =
         actor {
             let! message = mailbox.Receive()
-            if state % 5 = 0 then
+            if state % 10000 = 0 then
                 mailbox.Self <! PrepareBroadcast
             match message with
             | MeshInit ->
@@ -86,8 +88,8 @@ let meshNode id (initNeighbors:List<int>) (serverRef:IActorRef) (mailbox: Actor<
                 while j < temps.Count && t < temps.[j] do
                         t <- t + (temps.[j] - t) * k
                         j <- j + 1
-                //if t > 0.00 && t < 0.98 then
-                    //printfn "node has temperature %1f" t
+//                if t > 0.00 && t < 0.98 then
+//                    printfn "node has temperature %1f" t
                 temperatures.Add(t)
                 serverRef <! TempReport(id, new List<float>(temperatures))
                 //mailbox.Self <! PrepareBroadcast
@@ -106,13 +108,14 @@ let meshNode id (initNeighbors:List<int>) (serverRef:IActorRef) (mailbox: Actor<
                         maxTempNode <- id
                 
                 let maxNodeRef = mailbox.Context.ActorSelection(nodeAddr.[maxTempNode])
-                printfn "node %u want to send packet %u to %u" id packId maxTempNode
+                //printfn "node %u want to send packet %u to %u" id packId maxTempNode
                 maxNodeRef <! Packet(source, packId, hops + 1)
                 //mailbox.Self <! PrepareBroadcast
                 return! loop id myTemp (state+1)
             | Halt ->
-                printfn "hh"
-                printfn "mesh node %u ended" id
+                //printfn "hh"
+                //printfn "mesh node %u ended" id
+                printfn ""
         }
     loop id 0.0 0
  
@@ -141,7 +144,8 @@ let gateway (id:int) (initNeighbors:List<int>) (serverRef:IActorRef) (mailbox: A
                 mailbox.Self <! PrepareBroadcast
                 return! loop id 
             | Halt ->
-                printfn "%u stopped" id
+                //printfn "%u stopped" id
+                printfn ""
             | PrepareBroadcast ->
                 for nei in neighborTable.Keys do
                     if nodeAddr.ContainsKey(nei) then
@@ -171,17 +175,22 @@ let server (mailbox: Actor<_>) =
                 if totalPacketDelivered >= deliverTarget then
                     //todo report result and end simulation
                     printfn("simulation finished")
+                    // todo report average hop count
+                    let avghop = float(totalHops) / float(numPack)
+                    printfn $"total number of packets delivered: {deliverTarget}"
+                    printfn $"total number of nodes {numNode}"
+                    printfn $"average hop count is {avghop}"
                     //stop all the threads
                     for id in nodeAddrDict.Keys do
                         nodeAddrDict.[id] <! Halt
                 return! loop
             | PacketReq ->
                 totalPacketReq <- totalPacketReq + 1
-                
                 return! loop
             | TempReport(id, temps) ->
                 // todo let actor report temperature just uncomment
-                // printfn "%u has temperatures: %A" id temps
+                //let revList = temps.Reverse()
+                //printfn "%u has temperatures: %A" id temps;
                 return! loop
         }
     loop
@@ -214,7 +223,7 @@ let mutable kk = 1
 while gwCount < numAddtionalGW do
     let gwIndex = rand.Next(1, numNode - 1)
     if not(gws.Contains(gwIndex)) then
-        let gwnbs = getNeighbors gwIndex (numNode / 4) 
+        let gwnbs = getNeighbors gwIndex (numNode / 100 + 1) 
         let gwRef = spawn system ("gw" + string(gwIndex)) <| gateway gwIndex gwnbs serverActor
         gws.Add(gwIndex)
         gwCount <- gwCount + 1
@@ -226,7 +235,7 @@ while gwCount < numAddtionalGW do
 
 for i in [1..numNode - 2] do
     if not(gws.Contains(i)) then
-        let meshNeighbors = getNeighbors i (numNode / 4)//(rand.Next(numNode))
+        let meshNeighbors = getNeighbors i (numNode / 100 + 1)//(rand.Next(numNode))
         let meshActor = spawn system ("mesh-" + string(i)) <| meshNode i meshNeighbors serverActor
         nodeAddrDict.Add(i, meshActor)
         nodeAddr.Add(i, string(meshActor.Path))
@@ -254,9 +263,9 @@ while packCount < numPack do
     if not(gws.Contains(pick)) then
         let nodeRef = system.ActorSelection(nodeAddr.[pick])
         printfn "packet %u send to node %u" packCount pick
-        packCount <- packCount + 1
         nodeRef <! Packet(-1, packCount, 0)
-
+        packCount <- packCount + 1
+        
 Console.ReadLine() |> ignore   
         
 
